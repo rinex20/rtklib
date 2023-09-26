@@ -129,6 +129,7 @@ static const char *usage[]={
     "usage: rtkrcv [-s][-p port][-d dev][-o file][-w pwd][-r level][-t level][-sta sta]",
     "options",
     "  -s         start RTK server on program startup",
+    "  -nc        start RTK server on program startup with no console",
     "  -p port    port number for telnet console",
     "  -m port    port number for monitor stream",
     "  -d dev     terminal device for console",
@@ -420,8 +421,10 @@ static int startsvr(vt_t *vt)
         else cmds_periodic[i]=s2[i];
     }
     /* confirm overwrite */
-    for (i=3;i<8;i++) {
-        if (strtype[i]==STR_FILE&&!confwrite(vt,strpath[i])) return 0;
+    if (vt!=NULL) {
+        for (i=3;i<8;i++) {
+            if (strtype[i]==STR_FILE&&!confwrite(vt,strpath[i])) return 0;
+        }
     }
     if (prcopt.refpos==4) { /* rtcm */
         for (i=0;i<3;i++) prcopt.rb[i]=0.0;
@@ -635,7 +638,8 @@ static void prstatus(vt_t *vt)
     gtime_t eventime={0};
     const char *freq[]={"-","L1","L1+L2","L1+L2+E5b","L1+L2+E5b+L5","",""};
     rtcm_t rtcm[3];
-    int i,j,n,thread,cycle,state,rtkstat,nsat0,nsat1,prcout,rcvcount,tmcount,timevalid,nave;
+    pthread_t thread;
+    int i,j,n,cycle,state,rtkstat,nsat0,nsat1,prcout,rcvcount,tmcount,timevalid,nave;
     int cputime,nb[3]={0},nmsg[3][10]={{0}};
     char tstr[64],tmstr[64],s[1024],*p;
     double runtime,rt[3]={0},dop[4]={0},rr[3],bl1=0.0,bl2=0.0;
@@ -645,7 +649,7 @@ static void prstatus(vt_t *vt)
     
     rtksvrlock(&svr);
     rtk=svr.rtk;
-    thread=(int)svr.thread;
+    thread=svr.thread;
     cycle=svr.cycle;
     state=svr.state;
     rtkstat=svr.rtk.sol.stat;
@@ -1361,7 +1365,7 @@ static void *con_thread(void *arg)
     }
  
     /* auto start if option set */
-    if (start) {
+    if (start&1) { /* start with console */
         cmd_start(args,narg,con->vt);
         start=0;
     }
@@ -1453,7 +1457,7 @@ static void con_close(con_t *con)
     trace(3,"con_close:\n");
     
     if (!con) return;
-    con->state=con->vt->state=0;
+    con->state=0;
     pthread_join(con->thread,NULL);
     free(con);
 }
@@ -1632,7 +1636,8 @@ int main(int argc, char **argv)
     char *dev="",file[MAXSTR]="";
     
     for (i=1;i<argc;i++) {
-        if      (!strcmp(argv[i],"-s")) start=1;
+        if      (!strcmp(argv[i],"-s")) start|=1; /* console */
+        else if (!strcmp(argv[i],"-nc")) start|=2; /* no console */
         else if (!strcmp(argv[i],"-p")&&i+1<argc) port=atoi(argv[++i]);
         else if (!strcmp(argv[i],"-m")&&i+1<argc) moniport=atoi(argv[++i]);
         else if (!strcmp(argv[i],"-d")&&i+1<argc) dev=argv[++i];
@@ -1680,8 +1685,9 @@ int main(int argc, char **argv)
             traceclose();
             return -1;
         }
-    }
-    else {
+    } else if (start&2) { /* start without console */
+        startsvr(NULL); 
+    } else  {  
         /* open device for local console */
         if (!(con[0]=con_open(0,dev))) {
             fprintf(stderr,"console open error dev=%s\n",dev);
